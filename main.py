@@ -5,7 +5,15 @@ import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from pydantic import BaseModel
+import mysql.connector
 
+db = mysql.connector.connect(
+    host="localhost",
+    user="user", # Change this
+    password="password", # This too
+    database="buses_duk"
+)
+cur = db.cursor(buffered=True)
 
 class GetVhcInfoByID(BaseModel):
     ID: int
@@ -118,6 +126,11 @@ async def data_o_vozu(request: GetVhcInfoByID):
     else:
         trip = int(trip)
 
+    cur.execute(f'SELECT agency FROM vehicles WHERE vhc_id = {int(cleandata[0])}')
+    if cur.rowcount == 0:
+        agency = cleandata[5]
+    else:
+        agency = cur.fetchone()[0]
     return {
         "vehicle_id": int(cleandata[0]),
         "on_trip": ontrip,
@@ -126,7 +139,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
         "end_stop": cleandata[2],
         "current_stop": cleandata[3],
         "delay_according_to_OIS": int(cleandata[4]),
-        "agency": cleandata[5],
+        "agency": agency,
         "accessible": accessible,
         "last_ping": cleandata[8]
     }
