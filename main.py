@@ -7,16 +7,16 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 
-class GetBusInfoByID(BaseModel):
+class GetVhcInfoByID(BaseModel):
     ID: int
 
 
-class GetBusInfoByTrip(BaseModel):
+class GetVhcInfoByTrip(BaseModel):
     line_displayed: str
     trip: Union[int, None] = None
 
 
-class ReturnBusInfo(BaseModel):
+class ReturnVhcInfo(BaseModel):
     vehicle_id: int
     on_trip: bool
     line_displayed: str
@@ -29,15 +29,15 @@ class ReturnBusInfo(BaseModel):
     last_ping: str
 
 
-class ReturnBusInfoList(BaseModel):
-    __root__: List[ReturnBusInfo]
+class ReturnVhcInfoList(BaseModel):
+    __root__: List[ReturnVhcInfo]
 
 
 app = FastAPI()
 
 
-@app.post("/GetBusInfoByTrip", response_model=ReturnBusInfoList)
-async def data_o_spoji(request: GetBusInfoByTrip):
+@app.post("/GetVhcInfoByTrip", response_model=ReturnVhcInfoList)
+async def data_o_spoji(request: GetVhcInfoByTrip):
     vehicle_ids = []
     res = None
     res_tuple = list()
@@ -62,17 +62,16 @@ async def data_o_spoji(request: GetBusInfoByTrip):
             pass
 
     for vehicle_id in vehicle_ids:
-        # print(vehicle_id)
+        vhc_data = GetVhcInfoByID(ID=vehicle_id)
         # print(res)
-        vhc_data = GetBusInfoByID(ID=vehicle_id)
         res = await data_o_vozu(vhc_data)
         res_tuple.append(res)
-    bus_list = ReturnBusInfoList(__root__=res_tuple)
+    bus_list = ReturnVhcInfoList(__root__=res_tuple)
     return bus_list
 
 
-@app.post("/GetBusInfoByID", response_model=ReturnBusInfo)
-async def data_o_vozu(request: GetBusInfoByID):
+@app.post("/GetVhcInfoByID", response_model=ReturnVhcInfo)
+async def data_o_vozu(request: GetVhcInfoByID):
     url = 'https://provoz.kr-ustecky.cz/TMD/ItemDetails/Get'
 
     data = requests.post(url, json={'ID': request.ID})
