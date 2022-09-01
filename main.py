@@ -1,4 +1,5 @@
 from typing import Union, List
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -93,17 +94,20 @@ async def data_o_vozu(request: GetBusInfoByID):
             pass
         else:
             j += 1
-            cleandata.append(string)  # = repr(string)
+            cleandata.append(string) 
 
     if cleandata[6] == "Ano":
         accessible = True
     else:
         accessible = False
 
+    time_since_last_ping = datetime.strptime(cleandata[8], '%H:%M:%S %d.%m.%Y') - datetime.now()
     if cleandata[1] == "0/0":
         cleandata[1] = "0"
         ontrip = False
     elif cleandata[2] == cleandata[3]:
+        ontrip = False
+    elif time_since_last_ping.total_seconds() > 360:
         ontrip = False
     else:
         ontrip = True
