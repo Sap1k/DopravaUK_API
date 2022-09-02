@@ -26,7 +26,7 @@ class GetVhcInfoByTrip(BaseModel):
 
 
 class ReturnVhcInfo(BaseModel):
-    vehicle_id: int
+    vhc_id: int
     on_trip: bool
     line_displayed: str
     trip: int
@@ -43,12 +43,23 @@ class ReturnVhcInfoList(BaseModel):
     __root__: List[ReturnVhcInfo]
 
 
+class ReturnVhcDetails(BaseModel):
+    model: Union[str, None] = None
+    agency: str
+    year_of_manufacture: Union[int, None] = None
+    accessible: bool
+    contactless_payments: bool
+    air_conditioning: bool
+    alternate_fuel: bool
+    usb_chargers: bool
+
+
 app = FastAPI()
 
 
 @app.post("/GetVhcInfoByTrip", response_model=ReturnVhcInfoList)
 async def data_o_spoji(request: GetVhcInfoByTrip):
-    vehicle_ids = []
+    vhc_ids = []
     res_list = list()
     # Define data for getting VhcMarkers
     url_markers = 'https://provoz.kr-ustecky.cz/TMD/API/Map/GetVhcMarkers'
@@ -61,15 +72,15 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
     }
     data_markers = requests.post(url_markers, json=payload_markers).json()
 
-    for vehicle in data_markers["ItemL"]:
-        if vehicle["LineText"] == request.line_displayed and request.trip is None:
-            vehicle_ids.append(vehicle["ID"])
-        elif vehicle["LineText"] == request.line_displayed and vehicle["RouteID"] == request.trip:
-            vehicle_ids.append(vehicle["ID"])
+    for vhc in data_markers["ItemL"]:
+        if vhc["LineText"] == request.line_displayed and request.trip is None:
+            vhc_ids.append(vhc["ID"])
+        elif vhc["LineText"] == request.line_displayed and vhc["RouteID"] == request.trip:
+            vhc_ids.append(vhc["ID"])
         else:
             pass
 
-    for vehicle_id in vehicle_ids:
+    for vehicle_id in vhc_ids:
         vhc_data = GetVhcInfoByID(ID=vehicle_id)
         res = await data_o_vozu(vhc_data)
         res_list.append(res)
@@ -79,9 +90,71 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
 
 @app.post("/GetVhcInfoByID", response_model=ReturnVhcInfo)
 async def data_o_vozu(request: GetVhcInfoByID):
+    cleandata = await get_vhc_data(request.ID)
+
+    if len(str(cleandata["vhc_id"])) == 5:
+        is_train = True
+    else:
+        is_train = False
+
+    return {
+        "vhc_id": cleandata["vhc_id"],
+        "on_trip": cleandata["on_trip"],
+        "line_displayed": cleandata["line_displayed"],
+        "trip": cleandata["trip"],
+        "is_train": is_train,
+        "end_stop": cleandata["end_stop"],
+        "current_stop": cleandata["current_stop"],
+        "delay_according_to_OIS": cleandata["delay"],
+        "agency": cleandata["agency"],
+        "accessible": cleandata["accessible"],
+        "last_ping": cleandata["last_ping"]
+    }
+
+
+@app.post("/GetVhcDetailsByID", response_model=ReturnVhcDetails)
+async def detaily_o_vozu(request: GetVhcInfoByID):
+    cur.execute(f'SELECT * FROM vehicles WHERE vhc_id = {request.ID}')
+    if cur.rowcount == 0:
+        cleandata = await get_vhc_data(request.ID)
+        # Vehicle not in our db, return expected values for DÚK (according to quality requirements for all contracts
+        # from 2014 onwards (basically all valid contracts except trains, which will get their own system based on
+        # line/trip later
+        model = None
+        agency = cleandata["agency"]
+        year_of_manufacture = None
+        accessible = cleandata["accessible"]
+        contactless_payments = False
+        air_conditioning = True
+        alternate_fuel = False
+        usb_chargers = False
+    else:
+        vhc_details = cur.fetchone()
+        model = vhc_details[1]
+        agency = vhc_details[2]
+        year_of_manufacture = int(vhc_details[3])
+        accessible = bool(vhc_details[4])
+        contactless_payments = bool(vhc_details[5])
+        air_conditioning = bool(vhc_details[6])
+        alternate_fuel = bool(vhc_details[7])
+        usb_chargers = bool(vhc_details[8])
+
+    return {
+        "model": model,
+        "agency": agency,
+        "year_of_manufacture": year_of_manufacture,
+        "accessible": accessible,
+        "contactless_payments": contactless_payments,
+        "air_conditioning": air_conditioning,
+        "alternate_fuel": alternate_fuel,
+        "usb_chargers": usb_chargers
+    }
+
+
+async def get_vhc_data(vhc_id):
     url = 'https://provoz.kr-ustecky.cz/TMD/ItemDetails/Get'
 
-    data = requests.post(url, json={'ID': request.ID})
+    data = requests.post(url, json={'ID': vhc_id})
     data_new = BeautifulSoup(data.text, "html.parser")
     cleandata = []
 
@@ -118,7 +191,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
     else:
         ontrip = True
 
-    displayed_line = str(cleandata[1][:3]).strip('/')
+    line_displayed = str(cleandata[1][:3]).strip('/')
     trip = str(cleandata[1][3:].strip('/'))
     if trip == "":
         trip = int(0)
@@ -131,20 +204,14 @@ async def data_o_vozu(request: GetVhcInfoByID):
     else:
         agency = cur.fetchone()[0]
 
-    if len(cleandata[0]) == 5:
-        is_train = True
-    else:
-        is_train = False
-
     return {
-        "vehicle_id": int(cleandata[0]),
+        "vhc_id": int(cleandata[0]),
         "on_trip": ontrip,
-        "line_displayed": displayed_line,
+        "line_displayed": line_displayed,
         "trip": trip,
-        "is_train": is_train,
         "end_stop": cleandata[2],
         "current_stop": cleandata[3],
-        "delay_according_to_OIS": int(cleandata[4]),
+        "delay": int(cleandata[4]),
         "agency": agency,
         "accessible": accessible,
         "last_ping": cleandata[8]
