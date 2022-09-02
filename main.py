@@ -1,11 +1,11 @@
-from typing import Union, List
 from datetime import datetime
+from typing import Union, List
 
+import mysql.connector
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from pydantic import BaseModel
-import mysql.connector
 
 db = mysql.connector.connect(
     host="localhost",
@@ -14,6 +14,7 @@ db = mysql.connector.connect(
     database="buses_duk"
 )
 cur = db.cursor(buffered=True)
+
 
 class GetVhcInfoByID(BaseModel):
     ID: int
@@ -29,6 +30,7 @@ class ReturnVhcInfo(BaseModel):
     on_trip: bool
     line_displayed: str
     trip: int
+    is_train: bool
     end_stop: str
     current_stop: str
     delay_according_to_OIS: int
@@ -47,8 +49,7 @@ app = FastAPI()
 @app.post("/GetVhcInfoByTrip", response_model=ReturnVhcInfoList)
 async def data_o_spoji(request: GetVhcInfoByTrip):
     vehicle_ids = []
-    res = None
-    res_tuple = list()
+    res_list = list()
     # Define data for getting VhcMarkers
     url_markers = 'https://provoz.kr-ustecky.cz/TMD/API/Map/GetVhcMarkers'
     payload_markers = {
@@ -59,7 +60,6 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
         'SifterCarrierIDs': ''
     }
     data_markers = requests.post(url_markers, json=payload_markers).json()
-    dict_vehicle_id = {}
 
     for vehicle in data_markers["ItemL"]:
         if vehicle["LineText"] == request.line_displayed and request.trip is None:
@@ -71,10 +71,9 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
 
     for vehicle_id in vehicle_ids:
         vhc_data = GetVhcInfoByID(ID=vehicle_id)
-        # print(res)
         res = await data_o_vozu(vhc_data)
-        res_tuple.append(res)
-    bus_list = ReturnVhcInfoList(__root__=res_tuple)
+        res_list.append(res)
+    bus_list = ReturnVhcInfoList(__root__=res_list)
     return bus_list
 
 
@@ -101,7 +100,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
             pass
         else:
             j += 1
-            cleandata.append(string) 
+            cleandata.append(string)
 
     if cleandata[6] == "Ano":
         accessible = True
@@ -131,11 +130,18 @@ async def data_o_vozu(request: GetVhcInfoByID):
         agency = cleandata[5]
     else:
         agency = cur.fetchone()[0]
+
+    if len(cleandata[0]) == 5:
+        is_train = True
+    else:
+        is_train = False
+
     return {
         "vehicle_id": int(cleandata[0]),
         "on_trip": ontrip,
         "line_displayed": displayed_line,
         "trip": trip,
+        "is_train": is_train,
         "end_stop": cleandata[2],
         "current_stop": cleandata[3],
         "delay_according_to_OIS": int(cleandata[4]),
@@ -143,7 +149,3 @@ async def data_o_vozu(request: GetVhcInfoByID):
         "accessible": accessible,
         "last_ping": cleandata[8]
     }
-
-
-def fetch_bus_info():
-    pass
