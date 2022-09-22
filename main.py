@@ -16,6 +16,10 @@ db = mysql.connector.connect(
 cur = db.cursor(buffered=True)
 
 
+class GetVhcPos(BaseModel):
+    vhc_id: Union[int, None] = None
+
+
 class GetVhcInfoByID(BaseModel):
     ID: int
 
@@ -54,7 +58,47 @@ class ReturnVhcDetails(BaseModel):
     usb_chargers: bool
 
 
+class ReturnVhcPos(BaseModel):
+    vhc_id: int
+    lat: float
+    lng: float
+    azimuth: int
+
+
+class ReturnVhcPosList(BaseModel):
+    __root__: List[ReturnVhcPos]
+
+
 app = FastAPI()
+
+
+@app.post("/GetVhcPos", response_model=ReturnVhcPosList)
+async def pozice_spoju(request: GetVhcPos):
+    url_markers = 'https://provoz.kr-ustecky.cz/TMD/API/Map/GetVhcMarkers'
+    payload_markers = {
+        # TODO: This may have a very negative impact on govt infra, because by my understading it forces all vehicles
+        # TODO: to refresh their positions
+        'Reload': 'true',
+        'ShowMissingRides': 'true',
+        'SifterCarrierIDs': ''
+    }
+    data_markers = requests.post(url_markers, json=payload_markers).json()
+
+    res_list = list()
+
+    for vhc in data_markers["ItemL"]:
+        if request.vhc_id is None or request.vhc_id == vhc["ID"]:
+            res = {
+                "vhc_id": vhc["ID"],
+                "lat": vhc["Lat"],
+                "lng": vhc["Lng"],
+                "azimuth": vhc["Azimut"]
+            }
+            res_list.append(res)
+        else:
+            pass
+
+    return list(res_list)
 
 
 @app.post("/GetVhcInfoByTrip", response_model=ReturnVhcInfoList)

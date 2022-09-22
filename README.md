@@ -6,7 +6,7 @@ Co je/není implementováno:
  - [x] Získání dat o spoji dle č. vozu
  - [x] Získání dat o spoji dle Linky/Spoje
  - [X] Získání detailních informací o voze na lince
- - [ ] Získání polohy všech/daného spoje
+ - [X] Získání polohy všech/daného spoje
  - [ ] ??? Nějaké přesnější výpočty zpoždění
 	 - Toto by vyžadovalo napojení na pozice zastávek, polohu, a JŘ, což je momentálně mimo můj skill level, každopádně bych to jednoho dne rád dodělal :)
 
