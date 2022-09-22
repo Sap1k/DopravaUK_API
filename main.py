@@ -7,14 +7,6 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-db = mysql.connector.connect(
-    host="localhost",
-    user="user", # Change this
-    password="password", # This too
-    database="buses_duk"
-)
-cur = db.cursor(buffered=True)
-
 
 class GetVhcPos(BaseModel):
     vhc_id: Union[int, None] = None
@@ -67,6 +59,27 @@ class ReturnVhcPos(BaseModel):
 
 class ReturnVhcPosList(BaseModel):
     __root__: List[ReturnVhcPos]
+
+
+def init_db():
+    return mysql.connector.connect(
+        host="localhost",
+        user="user", # Change this
+        password="password", # This too
+        database="buses_duk"
+    )
+
+
+db = init_db()
+
+
+def get_cur():
+    global db
+    try:
+        db.ping(reconnect=True, attempts=3, delay=5)
+    except mysql.connector.Error as err:
+        db = init_db()
+    return db.cursor(buffered=True)
 
 
 app = FastAPI()
@@ -158,6 +171,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
 
 @app.post("/GetVhcDetailsByID", response_model=ReturnVhcDetails)
 async def detaily_o_vozu(request: GetVhcInfoByID):
+    cur = get_cur()
     cur.execute(f'SELECT * FROM vehicles WHERE vhc_id = {request.ID}')
     if cur.rowcount == 0:
         cleandata = await get_vhc_data(request.ID)
@@ -197,7 +211,7 @@ async def detaily_o_vozu(request: GetVhcInfoByID):
 
 async def get_vhc_data(vhc_id):
     url = 'https://provoz.kr-ustecky.cz/TMD/ItemDetails/Get'
-
+    cur = get_cur()
     data = requests.post(url, json={'ID': vhc_id})
     data_new = BeautifulSoup(data.text, "html.parser")
     cleandata = []
