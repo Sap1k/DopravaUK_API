@@ -210,6 +210,7 @@ async def detaily_o_vozu(request: GetVhcInfoByID):
 
 
 async def get_vhc_data(vhc_id):
+    resp = None
     url = 'https://provoz.kr-ustecky.cz/TMD/ItemDetails/Get'
     cur = get_cur()
     data = requests.post(url, json={'ID': vhc_id})
@@ -238,16 +239,10 @@ async def get_vhc_data(vhc_id):
     else:
         accessible = False
 
-    time_since_last_ping = datetime.strptime(cleandata[8], '%H:%M:%S %d.%m.%Y') - datetime.now()
-    if cleandata[1] == "0/0":
-        cleandata[1] = "0"
-        ontrip = False
-    elif cleandata[2] == cleandata[3]:
-        ontrip = False
-    elif time_since_last_ping.total_seconds() > 360:
-        ontrip = False
+    if isinstance(cleandata[8], int):
+        time_since_last_ping = 0
     else:
-        ontrip = True
+        time_since_last_ping = datetime.strptime(cleandata[8], '%H:%M:%S %d.%m.%Y') - datetime.now()
 
     line_displayed = str(cleandata[1][:3]).strip('/')
     trip = str(cleandata[1][3:].strip('/'))
@@ -256,21 +251,48 @@ async def get_vhc_data(vhc_id):
     else:
         trip = int(trip)
 
+    if cleandata[1] == "0/0":
+        cleandata[1] = "0"
+        ontrip = False
+    elif cleandata[2] == cleandata[3]:
+        ontrip = False
+    elif time_since_last_ping == 0:
+        ontrip = False
+        resp = {
+            "vhc_id": 0,
+            "on_trip": ontrip,
+            "line_displayed": line_displayed,
+            "trip": trip,
+            "end_stop": cleandata[2],
+            "current_stop": cleandata[3],
+            "delay": 0,
+            "agency": cleandata[5],
+            "accessible": accessible,
+            "last_ping": "?"
+        }
+    elif time_since_last_ping.total_seconds() > 360:
+        ontrip = False
+    else:
+        ontrip = True
+
     cur.execute(f'SELECT agency FROM vehicles WHERE vhc_id = {int(cleandata[0])}')
     if cur.rowcount == 0:
         agency = cleandata[5]
     else:
         agency = cur.fetchone()[0]
 
-    return {
-        "vhc_id": int(cleandata[0]),
-        "on_trip": ontrip,
-        "line_displayed": line_displayed,
-        "trip": trip,
-        "end_stop": cleandata[2],
-        "current_stop": cleandata[3],
-        "delay": int(cleandata[4]),
-        "agency": agency,
-        "accessible": accessible,
-        "last_ping": cleandata[8]
-    }
+    if resp is None:
+        resp = {
+            "vhc_id": int(cleandata[0]),
+            "on_trip": ontrip,
+            "line_displayed": line_displayed,
+            "trip": trip,
+            "end_stop": cleandata[2],
+            "current_stop": cleandata[3],
+            "delay": int(cleandata[4]),
+            "agency": agency,
+            "accessible": accessible,
+            "last_ping": cleandata[8]
+        }
+
+    return resp
