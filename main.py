@@ -61,25 +61,36 @@ class ReturnVhcPosList(BaseModel):
     __root__: List[ReturnVhcPos]
 
 
-def init_db():
+class ReturnStop(BaseModel):
+    stop_name: str
+    stop_lat: float
+    stop_lng: float
+    zone_id: str
+    wheelchair_boarding: bool
+
+
+class ReturnStopList(BaseModel):
+    __root__: List[ReturnStop]
+
+
+def init_db(db_name):
     return mysql.connector.connect(
         host="localhost",
         user="user", # Change this
         password="password", # This too
-        database="buses_duk"
-    )
+        database=db_name)
 
 
-db = init_db()
+db_bus = init_db("buses_duk")
+db_jr = init_db("DUK_JR")
 
 
-def get_cur():
-    global db
+def get_cur(cur_db, db_name):
     try:
-        db.ping(reconnect=True, attempts=3, delay=5)
+        cur_db.ping(reconnect=True, attempts=3, delay=5)
     except mysql.connector.Error as err:
-        db = init_db()
-    return db.cursor(buffered=True)
+        cur_db = init_db(db_name)
+    return cur_db.cursor(buffered=True)
 
 
 app = FastAPI()
@@ -134,6 +145,7 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
             vhc_ids.append(vhc["ID"])
         elif vhc["LineText"] == request.line_displayed and vhc["RouteID"] == request.trip:
             vhc_ids.append(vhc["ID"])
+            break
         else:
             pass
 
@@ -171,7 +183,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
 
 @app.post("/GetVhcDetailsByID", response_model=ReturnVhcDetails)
 async def detaily_o_vozu(request: GetVhcInfoByID):
-    cur = get_cur()
+    cur = get_cur(db_bus, "buses_duk")
     cur.execute(f'SELECT * FROM vehicles WHERE vhc_id = {request.ID}')
     if cur.rowcount == 0:
         cleandata = await get_vhc_data(request.ID)
@@ -209,10 +221,37 @@ async def detaily_o_vozu(request: GetVhcInfoByID):
     }
 
 
+@app.get("/GetStops", response_model=ReturnStopList)
+async def data_zastavek():
+    cur = get_cur(db_jr, "DUK_JR")
+    cur.execute("SELECT stop_name, stop_lat, stop_lon, zone_id, wheelchair_boarding FROM stops")
+    source_stops = cur.fetchall()
+    all_stops = list()
+
+    for stop in source_stops:
+        if stop[1] == "":
+            stop_lat = 0
+            stop_lng = 0
+        else:
+            stop_lat = float(stop[1])
+            stop_lng = float(stop[2])
+
+        stop_clean = {
+            'stop_name': stop[0],
+            'stop_lat': stop_lat,
+            'stop_lng': stop_lng,
+            'zone_id': stop[3],
+            'wheelchair_boarding': bool(int(stop[4])),
+        }
+        all_stops.append(stop_clean)
+
+    return all_stops
+
+
 async def get_vhc_data(vhc_id):
     resp = None
     url = 'https://provoz.kr-ustecky.cz/TMD/ItemDetails/Get'
-    cur = get_cur()
+    cur = get_cur(db_bus, "buses_duk")
     data = requests.post(url, json={'ID': vhc_id})
     data_new = BeautifulSoup(data.text, "html.parser")
     cleandata = []
