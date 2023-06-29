@@ -1,10 +1,11 @@
 /*
-Updated script by James Williams <https://jamesrwilliams.ca>
+Updated script by Martin Štrobl <recordyletsplays@gmail.com>
 Original script contributed by Michael Perkins
 https://github.com/sbma44/py-gtfs-mysql/blob/master/sql_better/load.sql
 */
 
-CREATE DATABASE IF NOT EXISTS DUK_JR;
+DROP DATABASE IF EXISTS DUK_JR;
+CREATE DATABASE DUK_JR;
 
 USE DUK_JR
 
@@ -17,8 +18,11 @@ CREATE TABLE `agency` (
 	agency_timezone VARCHAR(255),
 	agency_lang VARCHAR(255),
 	agency_phone VARCHAR(255),
-	agency_fare_url VARCHAR(255)
+	agency_fare_url VARCHAR(255),
+    agency_email VARCHAR(255)
 );
+
+CREATE INDEX agency_idx ON `agency`(agency_id);
 
 DROP TABLE IF EXISTS calendar_dates;
 
@@ -27,6 +31,8 @@ CREATE TABLE `calendar_dates` (
 	`date` VARCHAR(255),
 	exception_type TINYINT(1)
 );
+
+CREATE INDEX calendar_dates_idx ON `calendar_dates`(service_id, `date`);
 
 DROP TABLE IF EXISTS calendar;
 
@@ -43,17 +49,24 @@ CREATE TABLE `calendar` (
     end_date VARCHAR(255)
 );
 
+CREATE INDEX calendar_idx ON `calendar`(service_id, start_date, end_date);
+
 DROP TABLE IF EXISTS routes;
 
 CREATE TABLE `routes` (
-    route_id VARCHAR(255) PRIMARY KEY,
+    route_id VARCHAR(255),
     agency_id VARCHAR(255),
     route_short_name VARCHAR(255),
     route_long_name VARCHAR(255),
+    route_desc VARCHAR(255),
     route_type VARCHAR(255),
+    route_url VARCHAR(255),
     route_color VARCHAR(255),
-    route_text_color VARCHAR(255)
+    route_text_color VARCHAR(255),
+    route_sort_order VARCHAR(255)
 );
+
+CREATE INDEX routes_idx ON `routes`(route_id, agency_id);
 
 DROP TABLE IF EXISTS stop_times;
 
@@ -62,11 +75,16 @@ CREATE TABLE `stop_times` (
     arrival_time VARCHAR(255),
     departure_time VARCHAR(255),
     stop_id VARCHAR(255),
-    stop_sequence VARCHAR(255),
+    stop_sequence INT,
+    stop_headsign VARCHAR(255),
     pickup_type VARCHAR(255),
     drop_off_type VARCHAR(255),
-    stop_headsign VARCHAR(255)
+    shape_dist_traveled INT,
+    timepoint INT,
+    stop_zone_ids VARCHAR(255)
 );
+
+CREATE INDEX stop_times_idx ON `stop_times`(trip_id, stop_id);
 
 DROP TABLE IF EXISTS stops;
 
@@ -75,16 +93,18 @@ CREATE TABLE `stops` (
     stop_code VARCHAR(255),
     stop_name VARCHAR(255),
     stop_desc VARCHAR(255),
-    stop_lat VARCHAR(255),
-    stop_lon VARCHAR(255),
+    stop_lat FLOAT(8),
+    stop_lon FLOAT(8),
     zone_id VARCHAR(255),
     stop_url VARCHAR(255),
     location_type VARCHAR(255),
     parent_station VARCHAR(255),
     stop_timezone VARCHAR(255),
-    wheelchair_boarding VARCHAR(255),
-    platform_code VARCHAR(255)
+    wheelchair_boarding TINYINT(1),
+    platform_code TINYINT(1)
 );
+
+CREATE INDEX stops_idx ON `stops`(stop_id);
 
 DROP TABLE IF EXISTS trips;
 
@@ -94,13 +114,14 @@ CREATE TABLE `trips` (
     trip_id VARCHAR(255),
     trip_headsign VARCHAR(255),
     trip_short_name VARCHAR(255),
-    direction_id VARCHAR(255),
-    block_id VARCHAR(255),
-    shape_id VARCHAR(255),
-    wheelchair_accessible VARCHAR(255),
-    bikes_allowed VARCHAR(255),
-    route_variant VARCHAR(255)
+    direction_id TINYINT(1),
+    block_id INT,
+    shape_id INT,
+    wheelchair_accessible TINYINT(1),
+    bikes_allowed TINYINT(1)
 );
+
+CREATE INDEX trip_idx ON `trips`(route_id, service_id, trip_id);
 
 LOAD DATA LOCAL INFILE 'data/agency.txt' INTO TABLE agency FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' IGNORE 1 LINES;
 LOAD DATA LOCAL INFILE 'data/calendar_dates.txt' INTO TABLE calendar_dates FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' IGNORE 1 LINES;
