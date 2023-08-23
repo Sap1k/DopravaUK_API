@@ -1,5 +1,5 @@
 agency_id,agency_name,agency_url,agency_timezone,agency_lang,agency_phone,agency_fare_url,agency_email
 2:1:JDFA-06231292-1,"Dopravní společnost Ústeckého kraje, příspěvková organizace",https://www.ds-uk.cz/,Europe/Prague,cs,"",,info@ds-uk.cz
-2:5:JDFA-60193425-1,ČSAD Slaný s.r.o.,http://www.icomtransport.cz/csad-slany/,Europe/Prague,cs,"",,
-2:8:JDFA-09057846-1,UMBRELLA CITY LINES s.r.o.,"",Europe/Prague,cs,"",,
-2:21:JDFA-25332473-1,"Autobusy Karlovy Vary, a.s.",http://www.autobusy-kv.cz,Europe/Prague,cs,"",,
+2:2:JDFA-60193425-1,ČSAD Slaný s.r.o.,http://www.icomtransport.cz/csad-slany/,Europe/Prague,cs,"",,an.slany@icomtransport.cz
+2:4:JDFA-09057846-1,UMBRELLA CITY LINES s.r.o.,"",Europe/Prague,cs,"",,
+2:6:JDFA-25332473-1,"Autobusy Karlovy Vary, a.s.",http://www.autobusy-kv.cz,Europe/Prague,cs,"",,
