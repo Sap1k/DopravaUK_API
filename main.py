@@ -55,6 +55,8 @@ class ReturnVhcDetails(BaseModel):
 
 class ReturnVhcPos(BaseModel):
     vhc_id: int
+    line: str
+    trip: int
     lat: float
     lng: float
     azimuth: int
@@ -156,7 +158,6 @@ def get_correct_time(time):
 #     db.start_transaction(isolation_level='READ COMMITTED')
 #     return db
 
-
 async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
     con_del = get_con("buses_duk")
     cur_del = con_del.cursor()
@@ -246,15 +247,22 @@ async def pozice_spoju(request: GetVhcPos):
     cur = con.cursor()
 
     if request.line_displayed and request.trip:
-        cur.execute("SELECT DISTINCT vhc_id, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE line = %s AND trip = %s "
-                    "ORDER BY last_changed DESC", (request.line_displayed, request.trip))
+        cur.execute(
+            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE line = %s AND trip = %s "
+            "ORDER BY last_changed DESC", (request.line_displayed, request.trip))
         data_markers = cur.fetchall()
     elif request.vhc_id:
-        cur.execute("SELECT DISTINCT vhc_id, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE vhc_id = %s "
+        cur.execute("SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE vhc_id = %s "
                     "ORDER BY last_changed DESC", (request.vhc_id,))
         data_markers = cur.fetchall()
     else:
-        cur.execute("SELECT DISTINCT vhc_id, vhc_lat, vhc_lon, vhc_azimuth FROM delays ORDER BY last_changed DESC")
+        cur.execute("SELECT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays AS d1 "
+                    "WHERE d1.last_changed >= NOW() - INTERVAL 6 MINUTE AND d1.vhc_id LIKE '___' AND (d1.vhc_id, d1.last_changed) IN("
+                    "SELECT vhc_id, MAX(last_changed) "
+                    "FROM delays "
+                    "GROUP BY vhc_id "
+                    ") "
+                    "ORDER BY d1.last_changed DESC")
         data_markers = cur.fetchall()
 
     cur.close()
@@ -262,9 +270,11 @@ async def pozice_spoju(request: GetVhcPos):
 
     res_list = [{
         "vhc_id": vhc[0],
-        "lat": vhc[1],
-        "lng": vhc[2],
-        "azimuth": vhc[3]
+        "line": vhc[1],
+        "trip": vhc[2],
+        "lat": vhc[3],
+        "lng": vhc[4],
+        "azimuth": vhc[5]
     } for vhc in data_markers]
 
     return res_list
