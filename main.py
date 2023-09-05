@@ -5,7 +5,7 @@ import mysql.connector
 import pytz
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from geopy.distance import geodesic
+# from geopy.distance import geodesic
 from pydantic import BaseModel
 
 
