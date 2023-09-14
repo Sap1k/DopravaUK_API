@@ -491,7 +491,7 @@ async def rt_odjezdy(request: GetDepartures):
     time = datetime.datetime.now(tz=timezone)
     # Fetch all static departures to be messed with later
     # --If going back by an hour would span midnight, don't
-    if (time - datetime.timedelta(minutes=60)) == datetime.date.today():
+    if (time - datetime.timedelta(minutes=60)).date() == datetime.date.today():
         static_deps = await get_db_departures(request.stop, time - datetime.timedelta(minutes=60))
     else:
         static_deps = await get_db_departures(request.stop, time)
