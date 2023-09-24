@@ -3,6 +3,7 @@ from typing import Union, List, Dict, Tuple
 
 import mysql.connector
 import pytz
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 # from geopy.distance import geodesic
@@ -67,6 +68,7 @@ class ReturnVhcPosList(BaseModel):
 
 
 class ReturnStop(BaseModel):
+    stop_id: str
     stop_name: str
     stop_lat: float
     stop_lng: float
@@ -95,7 +97,7 @@ class ReturnStopsOnTrip(BaseModel):
 
 
 class GetDepartures(BaseModel):
-    stop: str
+    stop_id: str
 
 
 class ReturnStaticDeparture(BaseModel):
@@ -124,6 +126,15 @@ class ReturnStaticDepartureList(BaseModel):
 
 class ReturnRTDepartureList(BaseModel):
     __root__: List[ReturnRTDeparture]
+
+
+class ReturnGeometry(BaseModel):
+    lat: float
+    lng: float
+
+
+class ReturnGeometryList(BaseModel):
+    __root__: List[ReturnGeometry]
 
 
 def get_con(db_name):
@@ -382,18 +393,19 @@ async def detaily_o_vozu(request: GetVhcInfoByID):
 async def data_zastavek():
     con = get_con("DUK_JR")
     cur = con.cursor()
-    cur.execute("SELECT stop_name, stop_lat, stop_lon, zone_id, wheelchair_boarding FROM stops ORDER BY stop_name")
+    cur.execute("SELECT stop_id, stop_name, stop_lat, stop_lon, zone_id, wheelchair_boarding FROM stops ORDER BY stop_name")
     source_stops = cur.fetchall()
     all_stops = list()
     cur.close()
     con.close()
     for stop in source_stops:
         stop_clean = {
-            'stop_name': stop[0],
-            'stop_lat': stop[1],
-            'stop_lng': stop[2],
-            'zone_id': stop[3],
-            'wheelchair_boarding': bool(int(stop[4])),
+            'stop_id': stop[0],
+            'stop_name': stop[1],
+            'stop_lat': stop[2],
+            'stop_lng': stop[3],
+            'zone_id': stop[4],
+            'wheelchair_boarding': bool(int(stop[5])),
         }
         all_stops.append(stop_clean)
 
@@ -458,7 +470,7 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
 
 @app.post("/GetStaticDepartures", response_model=ReturnStaticDepartureList)
 async def odjezdy(request: GetDepartures):
-    stop_name = request.stop
+    stop_name = request.stop_id
     stop_deps = await get_db_departures(stop_name)
 
     dep_list = list()
@@ -492,9 +504,9 @@ async def rt_odjezdy(request: GetDepartures):
     # Fetch all static departures to be messed with later
     # --If going back by an hour would span midnight, don't
     if (time - datetime.timedelta(minutes=60)).date() == datetime.date.today():
-        static_deps = await get_db_departures(request.stop, time - datetime.timedelta(minutes=60))
+        static_deps = await get_db_departures(request.stop_id, time - datetime.timedelta(minutes=60))
     else:
-        static_deps = await get_db_departures(request.stop, time)
+        static_deps = await get_db_departures(request.stop_id, time)
     dep_list = list()
 
     # Fetch all vehicles that have pinged their location in the last three minutes
@@ -545,18 +557,55 @@ async def rt_odjezdy(request: GetDepartures):
     return dep_list
 
 
-async def get_db_departures(stop_name, time=None):
+@app.post('/GetTripGeometry', response_model=ReturnGeometryList)
+async def geojson_trasa(request: GetVhcInfoByTrip):
+    con = get_con("DUK_JR")
+    cur = con.cursor()
+    line = request.line_displayed
+    trip = request.trip
+    linetripstr = f"%{line} {trip}"
+
+    cur.execute('SELECT stops.stop_lon, stops.stop_lat '            
+                'FROM trips '
+                'JOIN stop_times ON trips.trip_id=stop_times.trip_id '
+                'JOIN stops ON stop_times.stop_id=stops.stop_id '
+                'WHERE trips.trip_short_name LIKE %s AND stops.stop_lon != 0 AND stops.stop_lat != 0 ' 
+                'ORDER BY stop_times.stop_sequence', (linetripstr,))
+
+    res_stops = cur.fetchall()
+
+    if not res_stops:
+        raise HTTPException(status_code=404, detail="linetrip not found in database!")
+
+    async with httpx.AsyncClient() as client:
+        # Fetch route from OpenRouteService
+        geo_json_route = await client.post('https://api.openrouteservice.org/v2/directions/driving-car/geojson',
+                                           headers={'Authorization': '5b3ce3597851110001cf6248703ab01ce7434ff8be86cf31c17dbdc5'},
+                                           json={'coordinates': res_stops})
+
+        print(geo_json_route.json())
+        route_raw = geo_json_route.json()['features'][0]['geometry']['coordinates']
+        route_to_return = list()
+
+        # Shove the returned values into dicts so that Pydantic doesn't kill me
+        for coord_pair in route_raw:
+            route_to_return.append({'lat': coord_pair[1],
+                                    'lng': coord_pair[0]})
+
+        return route_to_return
+
+
+async def get_db_departures(stop_id, time=None):
     timezone = pytz.timezone('Europe/Prague')
     if time is None:
         time = datetime.datetime.now(tz=timezone)
 
     con = get_con("DUK_JR")
     cur = con.cursor()
-    cur.execute('SELECT stop_id FROM stops WHERE stop_name = %s', (stop_name,))
+    cur.execute('SELECT stop_id FROM stops WHERE stop_id = %s', (stop_id,))
     stop = cur.fetchone()
     if not stop:
         raise HTTPException(status_code=404, detail="stop not found in database!")
-    stop_id = stop[0]
 
     date_gtfs = time.strftime('%Y%m%d')
     date_db = time.strftime('%Y-%m-%d')
