@@ -196,7 +196,9 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
                "JOIN agency ON agency.agency_id=routes.agency_id " \
                "JOIN stop_times ON stop_times.trip_id=trips.trip_id  " \
                "JOIN stops ON stop_times.stop_id=stops.stop_id " \
-               "WHERE trips.trip_short_name LIKE %s " \
+               "JOIN calendar ON calendar.service_id=trips.service_id " \
+               "WHERE trips.trip_short_name LIKE %s AND " \
+               "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date " \
                "AND stops.stop_id = %s " \
                "ORDER BY stop_sequence"
 
@@ -428,7 +430,9 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
                "JOIN agency ON agency.agency_id=routes.agency_id " \
                "JOIN stop_times ON stop_times.trip_id=trips.trip_id " \
                "JOIN stops ON stop_times.stop_id=stops.stop_id " \
-               "WHERE trips.trip_short_name LIKE %s "
+               "JOIN calendar ON calendar.service_id=trips.service_id " \
+               "WHERE trips.trip_short_name LIKE %s AND " \
+               "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date "
 
     tripquery = "SELECT stops.stop_name, stop_times.arrival_time, stop_times.departure_time, " \
                 "stops.wheelchair_boarding " \
@@ -437,7 +441,9 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
                 "JOIN agency ON agency.agency_id=routes.agency_id " \
                 "JOIN stop_times ON stop_times.trip_id=trips.trip_id " \
                 "JOIN stops ON stop_times.stop_id=stops.stop_id " \
-                "WHERE trips.trip_short_name LIKE %s " \
+                "JOIN calendar ON calendar.service_id=trips.service_id " \
+                "WHERE trips.trip_short_name LIKE %s AND " \
+                "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date " \
                 "ORDER BY stop_sequence"
 
     cur.execute(tripquery, (f"%{line} {trip}",))
@@ -565,11 +571,13 @@ async def geojson_trasa(request: GetVhcInfoByTrip):
     trip = request.trip
     linetripstr = f"%{line} {trip}"
 
-    cur.execute('SELECT stops.stop_lon, stops.stop_lat '            
+    cur.execute('SELECT stops.stop_lon, stops.stop_lat '
                 'FROM trips '
                 'JOIN stop_times ON trips.trip_id=stop_times.trip_id '
                 'JOIN stops ON stop_times.stop_id=stops.stop_id '
-                'WHERE trips.trip_short_name LIKE %s AND stops.stop_lon != 0 AND stops.stop_lat != 0 ' 
+                'JOIN calendar ON calendar.service_id=trips.service_id '
+                'WHERE trips.trip_short_name LIKE %s AND stops.stop_lon != 0 AND stops.stop_lat != 0 AND '
+                'CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date '
                 'ORDER BY stop_times.stop_sequence', (linetripstr,))
 
     res_stops = cur.fetchall()
