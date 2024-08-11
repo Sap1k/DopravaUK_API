@@ -33,6 +33,7 @@ class ReturnVhcInfo(BaseModel):
     is_train: bool
     end_stop: str
     current_stop: str
+    current_stop_sequence: int
     delay: int
     agency: str
     accessible: bool
@@ -61,6 +62,7 @@ class ReturnVhcPos(BaseModel):
     lat: float
     lng: float
     azimuth: int
+    delay: int
 
 
 class ReturnVhcPosList(BaseModel):
@@ -82,6 +84,7 @@ class ReturnStopList(BaseModel):
 
 class ReturnStopOnTrip(BaseModel):
     stop_name: str
+    stop_sequence: int
     arrival_time: datetime.time
     departure_time: datetime.time
     wheelchair_boarding: bool
@@ -176,10 +179,10 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
     cur_jr = con_jr.cursor()
 
     if line and trip:
-        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, delay, last_changed FROM delays "
+        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
                         "WHERE line = %s AND trip = %s ORDER BY last_changed DESC LIMIT 1", (line, trip))
     elif vhc_id:
-        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, delay, last_changed FROM delays "
+        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
                         "WHERE vhc_id = %s ORDER BY last_changed DESC LIMIT 1", (vhc_id,))
     else:
         return None
@@ -204,13 +207,14 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
 
     linetrip = f"%{vhc_details[1]} {vhc_details[2]}"
     last_stop_id = vhc_details[3]
+
     cur_jr.execute(sql_gtfs, (linetrip, last_stop_id))
     gtfs_details = cur_jr.fetchone()
 
     if not gtfs_details:
         gtfs_details = ('?', '?', 1, '?', '?')
 
-    if (datetime.datetime.now() - vhc_details[5]).total_seconds() > 360:
+    if (datetime.datetime.now() - vhc_details[6]).total_seconds() > 360:
         on_trip = False
     elif gtfs_details[0] == gtfs_details[4]:
         on_trip = False
@@ -224,10 +228,11 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
         "trip": vhc_details[2],
         "end_stop": gtfs_details[4],
         "current_stop": gtfs_details[0],
-        "delay": int(vhc_details[4] // 60),
+        "current_stop_sequence": vhc_details[4],
+        "delay": int(vhc_details[5] // 60),
         "agency": gtfs_details[3],
         "accessible": bool(gtfs_details[2]),
-        "last_ping": str(vhc_details[5])
+        "last_ping": str(vhc_details[6])
     }
 
     cur_del.close()
@@ -261,15 +266,15 @@ async def pozice_spoju(request: GetVhcPos):
 
     if request.line_displayed and request.trip:
         cur.execute(
-            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE line = %s AND trip = %s "
+            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays WHERE line = %s AND trip = %s "
             "ORDER BY last_changed DESC", (request.line_displayed, request.trip))
         data_markers = cur.fetchall()
     elif request.vhc_id:
-        cur.execute("SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays WHERE vhc_id = %s "
+        cur.execute("SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays WHERE vhc_id = %s "
                     "ORDER BY last_changed DESC", (request.vhc_id,))
         data_markers = cur.fetchall()
     else:
-        cur.execute("SELECT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth FROM delays AS d1 "
+        cur.execute("SELECT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays AS d1 "
                     "WHERE d1.last_changed >= NOW() - INTERVAL 6 MINUTE AND d1.vhc_id LIKE '___' AND (d1.vhc_id, d1.last_changed) IN("
                     "SELECT vhc_id, MAX(last_changed) "
                     "FROM delays "
@@ -287,7 +292,8 @@ async def pozice_spoju(request: GetVhcPos):
         "trip": vhc[2],
         "lat": vhc[3],
         "lng": vhc[4],
-        "azimuth": vhc[5]
+        "azimuth": vhc[5],
+        "delay": int(vhc[6] // 60)
     } for vhc in data_markers]
 
     return res_list
@@ -313,6 +319,7 @@ async def data_o_spoji(request: GetVhcInfoByTrip):
         "is_train": is_train,
         "end_stop": vhc_data["end_stop"],
         "current_stop": vhc_data["current_stop"],
+        "current_stop_sequence": vhc_data["current_stop_sequence"],
         "delay": vhc_data["delay"],
         "agency": vhc_data["agency"],
         "accessible": vhc_data["accessible"],
@@ -340,6 +347,7 @@ async def data_o_vozu(request: GetVhcInfoByID):
         "is_train": is_train,
         "end_stop": vhc_data["end_stop"],
         "current_stop": vhc_data["current_stop"],
+        "current_stop_sequence": vhc_data["current_stop_sequence"],
         "delay": vhc_data["delay"],
         "agency": vhc_data["agency"],
         "accessible": vhc_data["accessible"],
@@ -434,8 +442,8 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
                "WHERE trips.trip_short_name LIKE %s AND " \
                "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date "
 
-    tripquery = "SELECT stops.stop_name, stop_times.arrival_time, stop_times.departure_time, " \
-                "stops.wheelchair_boarding " \
+    tripquery = "SELECT stops.stop_name, stop_times.stop_sequence, stop_times.arrival_time, stop_times.departure_time, " \
+                "stops.wheelchair_boarding, trips.service_id " \
                 "FROM trips " \
                 "JOIN routes ON routes.route_id=trips.route_id " \
                 "JOIN agency ON agency.agency_id=routes.agency_id " \
@@ -451,9 +459,10 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
 
     res_stops = [{
         "stop_name": stop[0],
-        "arrival_time": get_correct_time(stop[1])[1],
-        "departure_time": get_correct_time(stop[2])[1],
-        "wheelchair_boarding": bool(stop[3])
+        "stop_sequence": stop[1],
+        "arrival_time": get_correct_time(stop[2])[1],
+        "departure_time": get_correct_time(stop[3])[1],
+        "wheelchair_boarding": bool(stop[4])
     } for stop in res_stops_raw]
 
     cur.execute(busquery, (f"%{line} {trip}",))
@@ -589,9 +598,10 @@ async def geojson_trasa(request: GetVhcInfoByTrip):
         # Fetch route from OpenRouteService
         geo_json_route = await client.post('https://api.openrouteservice.org/v2/directions/driving-car/geojson',
                                            headers={'Authorization': '5b3ce3597851110001cf6248703ab01ce7434ff8be86cf31c17dbdc5'},
-                                           json={'coordinates': res_stops})
+                                           json={'coordinates': res_stops,
+                                                 # 'continue_straight': True,
+                                                 'instructions': False})
 
-        print(geo_json_route.json())
         route_raw = geo_json_route.json()['features'][0]['geometry']['coordinates']
         route_to_return = list()
 
