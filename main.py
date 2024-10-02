@@ -76,6 +76,7 @@ class ReturnVhcDetails(BaseModel):
 
 class ReturnVhcPos(BaseModel):
     vhc_id: int
+    is_train: bool
     line: str
     trip: int
     lat: float
@@ -112,6 +113,7 @@ class ReturnStopOnTrip(BaseModel):
 class ReturnStopsOnTrip(BaseModel):
     line: str
     trip: int
+    is_train: bool
     last_stop: str
     agency: str
     accessible: bool
@@ -191,18 +193,19 @@ def get_correct_time(time):
 #     db.start_transaction(isolation_level='READ COMMITTED')
 #     return db
 
+
 async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
     con_del = get_con("buses_duk")
     cur_del = con_del.cursor()
-    con_jr = get_con("DUK_JR")
-    cur_jr = con_jr.cursor()
 
     if line and trip:
-        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
-                        "WHERE line = %s AND trip = %s ORDER BY last_changed DESC LIMIT 1", (line, trip))
+        cur_del.execute(
+            "SELECT vhc_id, line, trip, is_train, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
+            "WHERE line = %s AND trip = %s ORDER BY last_changed DESC LIMIT 1", (line, trip))
     elif vhc_id:
-        cur_del.execute("SELECT vhc_id, line, trip, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
-                        "WHERE vhc_id = %s ORDER BY last_changed DESC LIMIT 1", (vhc_id,))
+        cur_del.execute(
+            "SELECT vhc_id, line, trip, is_train, last_stop_id, last_stop_sequence, delay, last_changed FROM delays "
+            "WHERE vhc_id = %s ORDER BY last_changed DESC LIMIT 1", (vhc_id,))
     else:
         return None
 
@@ -212,28 +215,35 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
         return None
 
     sql_gtfs = "SELECT stops.stop_name AS current_stop, stop_times.departure_time, trips.wheelchair_accessible, agency.agency_name," \
-               "(SELECT stops.stop_name FROM stops JOIN stop_times ON stops.stop_id = stop_times.stop_id WHERE stop_times.trip_id = trips.trip_id ORDER BY stop_times.stop_sequence DESC LIMIT 1) AS last_stop " \
-               "FROM trips " \
-               "JOIN routes ON routes.route_id=trips.route_id " \
-               "JOIN agency ON agency.agency_id=routes.agency_id " \
-               "JOIN stop_times ON stop_times.trip_id=trips.trip_id  " \
-               "JOIN stops ON stop_times.stop_id=stops.stop_id " \
-               "JOIN calendar ON calendar.service_id=trips.service_id " \
-               "WHERE trips.trip_short_name LIKE %s AND " \
-               "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date " \
-               "AND stops.stop_id = %s " \
-               "ORDER BY stop_sequence"
+                     "(SELECT stops.stop_name FROM stops JOIN stop_times ON stops.stop_id = stop_times.stop_id WHERE stop_times.trip_id = trips.trip_id ORDER BY stop_times.stop_sequence DESC LIMIT 1) AS last_stop " \
+                     "FROM trips " \
+                     "JOIN routes ON routes.route_id=trips.route_id " \
+                     "JOIN agency ON agency.agency_id=routes.agency_id " \
+                     "JOIN stop_times ON stop_times.trip_id=trips.trip_id  " \
+                     "JOIN stops ON stop_times.stop_id=stops.stop_id " \
+                     "WHERE trips.service_id = %s " \
+                     "AND stops.stop_id = %s " \
+                     "ORDER BY stop_sequence"
 
-    linetrip = f"%{vhc_details[1]} {vhc_details[2]}"
-    last_stop_id = vhc_details[3]
+    last_stop_id = vhc_details[4]
+    is_czptt = bool(vhc_details[3])
 
-    cur_jr.execute(sql_gtfs, (linetrip, last_stop_id))
+    if is_czptt:
+        svc_id = await get_svc_id(is_czptt, vhc_details[2], datetime.date.today().strftime("%Y%m%d"))
+        con_jr = get_con("DUK_JR_vlak")
+        cur_jr = con_jr.cursor()
+    else:
+        svc_id = await get_svc_id(is_czptt, f"{vhc_details[1]} {vhc_details[2]}", datetime.date.today().strftime("%Y%m%d"))
+        con_jr = get_con("DUK_JR")
+        cur_jr = con_jr.cursor()
+
+    cur_jr.execute(sql_gtfs, (svc_id, last_stop_id))
     gtfs_details = cur_jr.fetchone()
 
     if not gtfs_details:
         gtfs_details = ('?', '?', 1, '?', '?')
 
-    if (datetime.datetime.now() - vhc_details[6]).total_seconds() > 360:
+    if (datetime.datetime.now() - vhc_details[7]).total_seconds() > 360:
         on_trip = False
     elif gtfs_details[0] == gtfs_details[4]:
         on_trip = False
@@ -245,13 +255,14 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
         "on_trip": on_trip,
         "line_displayed": vhc_details[1],
         "trip": vhc_details[2],
+        "is_train": bool(vhc_details[3]),
         "end_stop": gtfs_details[4],
         "current_stop": gtfs_details[0],
-        "current_stop_sequence": vhc_details[4],
-        "delay": int(vhc_details[5] // 60),
+        "current_stop_sequence": vhc_details[5],
+        "delay": int(vhc_details[6] // 60),
         "agency": gtfs_details[3],
         "accessible": bool(gtfs_details[2]),
-        "last_ping": str(vhc_details[6])
+        "last_ping": str(vhc_details[7])
     }
 
     cur_del.close()
@@ -260,6 +271,37 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
     con_jr.close()
 
     return resp
+
+
+async def get_svc_id(is_czptt, svc_friendly_id, date):
+    if is_czptt:
+        con = get_con('DUK_JR_vlak')
+        cur = con.cursor()
+        sql_train_svc_id = "SELECT trips.service_id FROM trips " \
+                           "JOIN calendar ON trips.service_id=calendar.service_id " \
+                           "JOIN calendar_dates ON trips.service_id=calendar_dates.service_id " \
+                           "WHERE trips.route_id LIKE %s " \
+                           "AND calendar_dates.date = %s " \
+                           "AND calendar_dates.exception_type = 1 " \
+                           "GROUP BY trips.service_id " \
+                           "ORDER BY MAX(calendar.start_date) DESC LIMIT 1"
+        cur.execute(sql_train_svc_id, (f"%-{svc_friendly_id}", date))
+        svc_id = cur.fetchone()
+    else:
+        con = get_con('DUK_JR')
+        cur = con.cursor()
+        sql_bus_svc_id = "SELECT trips.service_id FROM trips " \
+                         "JOIN calendar ON calendar.service_id=trips.service_id " \
+                         "WHERE trips.trip_short_name LIKE %s AND " \
+                         "%s BETWEEN calendar.start_date AND calendar.end_date "
+        cur.execute(sql_bus_svc_id, (f"%{svc_friendly_id}", date))
+        svc_id = cur.fetchone()
+    cur.close()
+    con.close()
+    if svc_id is None:
+        return "INVALID_TRIP"
+    else:
+        return svc_id[0]
 
 
 app = FastAPI()
@@ -285,16 +327,17 @@ async def pozice_spoju(request: GetVhcPos):
 
     if request.line_displayed and request.trip:
         cur.execute(
-            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays WHERE line = %s AND trip = %s "
+            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay, is_train FROM delays WHERE line = %s AND trip = %s "
             "ORDER BY last_changed DESC", (request.line_displayed, request.trip))
         data_markers = cur.fetchall()
     elif request.vhc_id:
-        cur.execute("SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays WHERE vhc_id = %s "
-                    "ORDER BY last_changed DESC", (request.vhc_id,))
+        cur.execute(
+            "SELECT DISTINCT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay, is_train FROM delays WHERE vhc_id = %s "
+            "ORDER BY last_changed DESC", (request.vhc_id,))
         data_markers = cur.fetchall()
     else:
-        cur.execute("SELECT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay FROM delays AS d1 "
-                    "WHERE d1.last_changed >= NOW() - INTERVAL 6 MINUTE AND d1.vhc_id LIKE '___' AND (d1.vhc_id, d1.last_changed) IN("
+        cur.execute("SELECT vhc_id, line, trip, vhc_lat, vhc_lon, vhc_azimuth, delay, is_train FROM delays AS d1 "
+                    "WHERE d1.last_changed >= NOW() - INTERVAL 6 MINUTE AND d1.vhc_id < 60000 AND (d1.vhc_id, d1.last_changed) IN("
                     "SELECT vhc_id, MAX(last_changed) "
                     "FROM delays "
                     "GROUP BY vhc_id "
@@ -312,7 +355,8 @@ async def pozice_spoju(request: GetVhcPos):
         "lat": vhc[3],
         "lng": vhc[4],
         "azimuth": vhc[5],
-        "delay": int(vhc[6] // 60)
+        "delay": int(vhc[6] // 60),
+        "is_train": bool(vhc[7])
     } for vhc in data_markers]
 
     return res_list
@@ -320,22 +364,18 @@ async def pozice_spoju(request: GetVhcPos):
 
 @app.post("/GetVhcInfoByTrip", response_model=ReturnVhcInfo)
 async def data_o_spoji(request: GetVhcInfoByTrip):
+    print(request.trip)
     vhc_data = await get_vhc_data_new(line=request.line_displayed, trip=request.trip)
 
     if vhc_data is None:
         raise HTTPException(status_code=404, detail="linetrip not found in database!")
-
-    if len(str(vhc_data["vhc_id"])) == 5:
-        is_train = True
-    else:
-        is_train = False
 
     return {
         "vhc_id": vhc_data["vhc_id"],
         "on_trip": vhc_data["on_trip"],
         "line_displayed": vhc_data["line_displayed"],
         "trip": vhc_data["trip"],
-        "is_train": is_train,
+        "is_train": vhc_data["is_train"],
         "end_stop": vhc_data["end_stop"],
         "current_stop": vhc_data["current_stop"],
         "current_stop_sequence": vhc_data["current_stop_sequence"],
@@ -353,17 +393,12 @@ async def data_o_vozu(request: GetVhcInfoByID):
     if vhc_data is None:
         raise HTTPException(status_code=404, detail="vhc_id not found in database!")
 
-    if len(str(vhc_data["vhc_id"])) == 5:
-        is_train = True
-    else:
-        is_train = False
-
     return {
         "vhc_id": vhc_data["vhc_id"],
         "on_trip": vhc_data["on_trip"],
         "line_displayed": vhc_data["line_displayed"],
         "trip": vhc_data["trip"],
-        "is_train": is_train,
+        "is_train": vhc_data["is_train"],
         "end_stop": vhc_data["end_stop"],
         "current_stop": vhc_data["current_stop"],
         "current_stop_sequence": vhc_data["current_stop_sequence"],
@@ -422,7 +457,8 @@ async def detaily_o_vozu(request: GetVhcInfoByID):
 async def data_zastavek():
     con = get_con("DUK_JR")
     cur = con.cursor()
-    cur.execute("SELECT stop_id, stop_name, stop_lat, stop_lon, zone_id, wheelchair_boarding FROM stops ORDER BY stop_name")
+    cur.execute(
+        "SELECT stop_id, stop_name, stop_lat, stop_lon, zone_id, wheelchair_boarding FROM stops ORDER BY stop_name")
     source_stops = cur.fetchall()
     all_stops = list()
     cur.close()
@@ -441,39 +477,51 @@ async def data_zastavek():
     return all_stops
 
 
+@app.get("/GetTrainConsist", response_model=ReturnCompleteTrainData)
+async def sestavy_vlaku():
+    with open("const.json", 'r', encoding='UTF-8') as file:
+        const = json.load(file)
+
+    return const
+
+
 @app.post("/GetStopsOnTrip", response_model=ReturnStopsOnTrip)
 async def trasa_spoje(request: GetVhcInfoByTrip):
-    con = get_con("DUK_JR")
-    cur = con.cursor()
-
     line = request.line_displayed
     trip = request.trip
+    is_czptt = not request.line_displayed.isnumeric()
 
-    busquery = "SELECT DISTINCT agency.agency_name, trips.wheelchair_accessible, " \
-               "(SELECT stops.stop_name FROM stops JOIN stop_times ON stops.stop_id = stop_times.stop_id WHERE " \
-               "stop_times.trip_id = trips.trip_id ORDER BY stop_times.stop_sequence DESC LIMIT 1) AS last_stop " \
-               "FROM trips " \
-               "JOIN routes ON routes.route_id=trips.route_id " \
-               "JOIN agency ON agency.agency_id=routes.agency_id " \
-               "JOIN stop_times ON stop_times.trip_id=trips.trip_id " \
-               "JOIN stops ON stop_times.stop_id=stops.stop_id " \
-               "JOIN calendar ON calendar.service_id=trips.service_id " \
-               "WHERE trips.trip_short_name LIKE %s AND " \
-               "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date "
-
-    tripquery = "SELECT stops.stop_name, stop_times.stop_sequence, stop_times.arrival_time, stop_times.departure_time, " \
-                "stops.wheelchair_boarding, trips.service_id " \
+    tripquery = "SELECT DISTINCT agency.agency_name, trips.wheelchair_accessible, " \
+                "(SELECT stops.stop_name FROM stops JOIN stop_times ON stops.stop_id = stop_times.stop_id WHERE " \
+                "stop_times.trip_id = trips.trip_id ORDER BY stop_times.stop_sequence DESC LIMIT 1) AS last_stop " \
                 "FROM trips " \
                 "JOIN routes ON routes.route_id=trips.route_id " \
                 "JOIN agency ON agency.agency_id=routes.agency_id " \
                 "JOIN stop_times ON stop_times.trip_id=trips.trip_id " \
                 "JOIN stops ON stop_times.stop_id=stops.stop_id " \
                 "JOIN calendar ON calendar.service_id=trips.service_id " \
-                "WHERE trips.trip_short_name LIKE %s AND " \
-                "CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date " \
-                "ORDER BY stop_sequence"
+                "WHERE trips.trip_id LIKE %s "
 
-    cur.execute(tripquery, (f"%{line} {trip}",))
+    routequery = "SELECT stops.stop_name, stop_times.stop_sequence, stop_times.arrival_time, stop_times.departure_time, " \
+                 "stops.wheelchair_boarding, trips.service_id " \
+                 "FROM trips " \
+                 "JOIN routes ON routes.route_id=trips.route_id " \
+                 "JOIN agency ON agency.agency_id=routes.agency_id " \
+                 "JOIN stop_times ON stop_times.trip_id=trips.trip_id " \
+                 "JOIN stops ON stop_times.stop_id=stops.stop_id " \
+                 "JOIN calendar ON calendar.service_id=trips.service_id " \
+                 "WHERE trips.trip_id = %s ORDER BY stop_sequence"
+
+    if is_czptt:
+        con = get_con("DUK_JR_vlak")
+        cur = con.cursor()
+        svc_id = await get_svc_id(is_czptt, trip, datetime.date.today().strftime("%Y%m%d"))
+    else:
+        con = get_con("DUK_JR")
+        cur = con.cursor()
+        svc_id = await get_svc_id(is_czptt, f"{line} {trip}", datetime.date.today().strftime("%Y%m%d"))
+
+    cur.execute(routequery, (svc_id,))
     res_stops_raw = cur.fetchall()
 
     res_stops = [{
@@ -484,18 +532,19 @@ async def trasa_spoje(request: GetVhcInfoByTrip):
         "wheelchair_boarding": bool(stop[4])
     } for stop in res_stops_raw]
 
-    cur.execute(busquery, (f"%{line} {trip}",))
-    res_bus = cur.fetchone()
+    cur.execute(tripquery, (svc_id,))
+    res_trip = cur.fetchone()
 
-    if not res_stops or not res_bus:
+    if not (res_stops and res_trip):
         raise HTTPException(status_code=404, detail="linetrip not found in database!")
 
     resp = {
         'line': line,
         'trip': trip,
-        'last_stop': res_bus[2],
-        'agency': res_bus[0],
-        'accessible': res_bus[1],
+        'is_train': is_czptt,
+        'last_stop': res_trip[2],
+        'agency': res_trip[0],
+        'accessible': res_trip[1],
         'stops': res_stops
     }
 
@@ -593,22 +642,26 @@ async def rt_odjezdy(request: GetDepartures):
 
 @app.post('/GetTripGeometry', response_model=ReturnGeometryList)
 async def geojson_trasa(request: GetVhcInfoByTrip):
-    con = get_con("DUK_JR")
-    cur = con.cursor()
-
     line = request.line_displayed
     trip = request.trip
+    is_czptt = not request.line_displayed.isnumeric()
 
     sql = 'SELECT shapes.shape_pt_lat, shapes.shape_pt_lon ' \
-                'FROM trips ' \
-                'JOIN shapes ON trips.shape_id=shapes.shape_id ' \
-                'JOIN calendar ON calendar.service_id=trips.service_id ' \
-                'WHERE trips.trip_short_name LIKE %s AND ' \
-                'CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date ' \
-                'ORDER BY shapes.shape_pt_sequence'
+          'FROM trips ' \
+          'JOIN shapes ON trips.shape_id=shapes.shape_id ' \
+          'WHERE trips.service_id = %s ' \
+          'ORDER BY shapes.shape_pt_sequence'
 
-    linetripstr = f"%{line} {trip}"
-    cur.execute(sql, (linetripstr,))
+    if is_czptt:
+        con = get_con("DUK_JR_vlak")
+        cur = con.cursor()
+        svc_id = await get_svc_id(is_czptt, trip, datetime.date.today().strftime("%Y%m%d"))
+    else:
+        con = get_con("DUK_JR")
+        cur = con.cursor()
+        svc_id = await get_svc_id(is_czptt, f"{line} {trip}", datetime.date.today().strftime("%Y%m%d"))
+
+    cur.execute(sql, (svc_id,))
     res_stops = cur.fetchall()
 
     if not res_stops:
@@ -618,6 +671,8 @@ async def geojson_trasa(request: GetVhcInfoByTrip):
     for coord_pair in res_stops:
         route_to_return.append({'lat': coord_pair[0], 'lng': coord_pair[1]})
 
+    cur.close()
+    con.close()
     return route_to_return
 
 
