@@ -595,41 +595,72 @@ async def rt_odjezdy(request: GetDepartures):
 async def geojson_trasa(request: GetVhcInfoByTrip):
     con = get_con("DUK_JR")
     cur = con.cursor()
+
     line = request.line_displayed
     trip = request.trip
+
+    sql = 'SELECT shapes.shape_pt_lat, shapes.shape_pt_lon ' \
+                'FROM trips ' \
+                'JOIN shapes ON trips.shape_id=shapes.shape_id ' \
+                'JOIN calendar ON calendar.service_id=trips.service_id ' \
+                'WHERE trips.trip_short_name LIKE %s AND ' \
+                'CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date ' \
+                'ORDER BY shapes.shape_pt_sequence'
+
     linetripstr = f"%{line} {trip}"
-
-    cur.execute('SELECT stops.stop_lon, stops.stop_lat '
-                'FROM trips '
-                'JOIN stop_times ON trips.trip_id=stop_times.trip_id '
-                'JOIN stops ON stop_times.stop_id=stops.stop_id '
-                'JOIN calendar ON calendar.service_id=trips.service_id '
-                'WHERE trips.trip_short_name LIKE %s AND stops.stop_lon != 0 AND stops.stop_lat != 0 AND '
-                'CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date '
-                'ORDER BY stop_times.stop_sequence', (linetripstr,))
-
+    cur.execute(sql, (linetripstr,))
     res_stops = cur.fetchall()
 
     if not res_stops:
         raise HTTPException(status_code=404, detail="linetrip not found in database!")
 
-    async with httpx.AsyncClient() as client:
-        # Fetch route from OpenRouteService
-        geo_json_route = await client.post('https://api.openrouteservice.org/v2/directions/driving-car/geojson',
-                                           headers={'Authorization': '5b3ce3597851110001cf6248703ab01ce7434ff8be86cf31c17dbdc5'},
-                                           json={'coordinates': res_stops,
-                                                 # 'continue_straight': True,
-                                                 'instructions': False})
+    route_to_return = list()
+    for coord_pair in res_stops:
+        route_to_return.append({'lat': coord_pair[0], 'lng': coord_pair[1]})
 
-        route_raw = geo_json_route.json()['features'][0]['geometry']['coordinates']
-        route_to_return = list()
+    return route_to_return
 
-        # Shove the returned values into dicts so that Pydantic doesn't kill me
-        for coord_pair in route_raw:
-            route_to_return.append({'lat': coord_pair[1],
-                                    'lng': coord_pair[0]})
 
-        return route_to_return
+# @app.post('/GetTripGeometry', response_model=ReturnGeometryList)
+# async def geojson_trasa(request: GetVhcInfoByTrip):
+#     con = get_con("DUK_JR")
+#     cur = con.cursor()
+#     line = request.line_displayed
+#     trip = request.trip
+#     linetripstr = f"%{line} {trip}"
+#
+#     cur.execute('SELECT stops.stop_lon, stops.stop_lat '
+#                 'FROM trips '
+#                 'JOIN stop_times ON trips.trip_id=stop_times.trip_id '
+#                 'JOIN stops ON stop_times.stop_id=stops.stop_id '
+#                 'JOIN calendar ON calendar.service_id=trips.service_id '
+#                 'WHERE trips.trip_short_name LIKE %s AND stops.stop_lon != 0 AND stops.stop_lat != 0 AND '
+#                 'CURRENT_DATE BETWEEN calendar.start_date AND calendar.end_date '
+#                 'ORDER BY stop_times.stop_sequence', (linetripstr,))
+#
+#     res_stops = cur.fetchall()
+#
+#     if not res_stops:
+#         raise HTTPException(status_code=404, detail="linetrip not found in database!")
+#
+#     async with httpx.AsyncClient() as client:
+#         # Fetch route from OpenRouteService
+#         geo_json_route = await client.post('https://api.openrouteservice.org/v2/directions/driving-car/geojson',
+#                                            headers={'Authorization': '5b3ce3597851110001cf6248703ab01ce7434ff8be86cf31c17dbdc5'},
+#                                            json={'coordinates': res_stops,
+#                                                  # 'continue_straight': True,
+#                                                  'instructions': False})
+#
+#         print(geo_json_route)
+#         route_raw = geo_json_route.json()['features'][0]['geometry']['coordinates']
+#         route_to_return = list()
+#
+#         # Shove the returned values into dicts so that Pydantic doesn't kill me
+#         for coord_pair in route_raw:
+#             route_to_return.append({'lat': coord_pair[1],
+#                                     'lng': coord_pair[0]})
+#
+#         return route_to_return
 
 
 async def get_db_departures(stop_id, time=None):
