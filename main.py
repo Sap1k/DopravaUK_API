@@ -1,19 +1,38 @@
 import datetime
-from typing import Union, List, Dict, Tuple
+import json
+from typing import List, Optional
 
 import mysql.connector
 import pytz
-import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 # from geopy.distance import geodesic
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
+
+
+# Train data classes
+class ReturnCoachData(BaseModel):
+    Type: str
+    Img: str
+    ImgAlt: str
+    Services: List[str]  # Specify type for list items
+
+
+class ReturnTrainData(BaseModel):
+    TrainNum: str
+    Date: str  # Specify type directly for date
+    Type: str
+    Coaches: List[ReturnCoachData]
+
+
+class ReturnCompleteTrainData(BaseModel):
+    Trains: List[ReturnTrainData]
 
 
 class GetVhcPos(BaseModel):
-    vhc_id: Union[int, None] = None
-    line_displayed: Union[str, None] = None
-    trip: Union[int, None] = None
+    vhc_id: Optional[int] = None
+    line_displayed: Optional[str] = None
+    trip: Optional[int] = None
 
 
 class GetVhcInfoByID(BaseModel):
@@ -40,14 +59,14 @@ class ReturnVhcInfo(BaseModel):
     last_ping: str
 
 
-class ReturnVhcInfoList(BaseModel):
-    __root__: List[ReturnVhcInfo]
+class ReturnVhcInfoList(RootModel):
+    root: List[ReturnVhcInfo]
 
 
 class ReturnVhcDetails(BaseModel):
-    model: Union[str, None] = None
+    model: Optional[str] = None
     agency: str
-    year_of_manufacture: Union[int, None] = None
+    year_of_manufacture: Optional[int] = None
     accessible: bool
     contactless_payments: bool
     air_conditioning: bool
@@ -65,8 +84,8 @@ class ReturnVhcPos(BaseModel):
     delay: int
 
 
-class ReturnVhcPosList(BaseModel):
-    __root__: List[ReturnVhcPos]
+class ReturnVhcPosList(RootModel):
+    root: List[ReturnVhcPos]
 
 
 class ReturnStop(BaseModel):
@@ -78,8 +97,8 @@ class ReturnStop(BaseModel):
     wheelchair_boarding: bool
 
 
-class ReturnStopList(BaseModel):
-    __root__: List[ReturnStop]
+class ReturnStopList(RootModel):
+    root: List[ReturnStop]
 
 
 class ReturnStopOnTrip(BaseModel):
@@ -123,12 +142,12 @@ class ReturnRTDeparture(BaseModel):
     low_floor: bool
 
 
-class ReturnStaticDepartureList(BaseModel):
-    __root__: List[ReturnStaticDeparture]
+class ReturnStaticDepartureList(RootModel):
+    root: List[ReturnStaticDeparture]
 
 
-class ReturnRTDepartureList(BaseModel):
-    __root__: List[ReturnRTDeparture]
+class ReturnRTDepartureList(RootModel):
+    root: List[ReturnRTDeparture]
 
 
 class ReturnGeometry(BaseModel):
@@ -136,8 +155,8 @@ class ReturnGeometry(BaseModel):
     lng: float
 
 
-class ReturnGeometryList(BaseModel):
-    __root__: List[ReturnGeometry]
+class ReturnGeometryList(RootModel):
+    root: List[ReturnGeometry]
 
 
 def get_con(db_name):
