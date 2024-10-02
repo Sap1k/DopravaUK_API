@@ -171,9 +171,9 @@ def get_con(db_name):
 
 
 def get_correct_time(time):
-    if time[:2] == '24':
+    if int(time[:2]) > 23:
         days_to_add = 1
-        departure_time = '00' + time[2:]
+        departure_time = str(int(time[:2]) - 24) + time[2:]
     else:
         days_to_add = 0
         departure_time = time
