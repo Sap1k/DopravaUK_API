@@ -1,7 +1,10 @@
 import datetime
 import json
+import re
+import urllib.parse
 from typing import List, Optional
 
+import httpx
 import mysql.connector
 import pytz
 from fastapi import FastAPI, HTTPException
@@ -11,6 +14,12 @@ from pydantic import BaseModel, RootModel
 
 
 # Train data classes
+class GetTrainData(BaseModel):
+    train_no: int
+    station_id: Optional[str] = None
+    #date: Optional[datetime.date] = None
+
+
 class ReturnCoachData(BaseModel):
     Type: str
     Img: str
@@ -20,6 +29,8 @@ class ReturnCoachData(BaseModel):
 
 class ReturnTrainData(BaseModel):
     TrainNum: str
+    StationID: str
+    StationName: str
     Date: str  # Specify type directly for date
     Type: str
     Coaches: List[ReturnCoachData]
@@ -272,7 +283,72 @@ async def get_vhc_data_new(vhc_id=None, line=None, trip=None):
 
     return resp
 
+# Returns json compliant with ReturnCompleteTrainData class if succeeds
+# If this function fails, it returns an empty json
+async def fetch_rewrite_cdis_json(url, station_id, station_name):
+    async with httpx.AsyncClient() as client:
+        # Fetch route from OpenRouteService
+        response = await client.get(url=url)
 
+        # Remove the wrapping parentheses and get the raw JSON string
+        raw_data = response.text.strip().strip('();')
+
+        # Use regex to extract the relevant JSON part
+        match = re.search(r'{"d":.*?}}', raw_data, re.DOTALL)
+
+        if not match:
+            return []
+
+        json_data = match.group(0)
+
+        # Load the extracted JSON data
+        data = json.loads(json_data)
+
+        # Prepare the final JSON structure
+        result = {
+            "Trains": []
+        }
+
+        # Extract service descriptions for easy reference
+        svc_desc = {item['Img']: item['Text'] for item in data['d']['SvcDescEnum']}
+
+        # Loop through the trains
+        for train in data['d']['Trains']:
+            train_info = {
+                "TrainNum": train['TrainNum'],
+                "Date": train['Date'],
+                "StationID": station_id,
+                "StationName": station_name,
+                "Type": train['__type'],  # Added train type here
+                "Coaches": []
+            }
+
+            # Loop through the coaches for each train
+            if train['Coachs'] is None:
+                train['Coachs'] = []
+
+            for coach in train['Coachs']:
+                coach_info = {
+                    "Type": coach['Type'],
+                    "Img": coach['Img'],
+                    "ImgAlt": coach['ImgAlt'],
+                    "Services": []  # Initialize as empty list
+                }
+
+                # Only add services if they are not None
+                if coach['Services'] is not None:
+                    for service in coach['Services']:
+                        svc_img = service['Img']
+                        if svc_img in svc_desc:
+                            coach_info["Services"].append(svc_desc[svc_img])
+
+                train_info["Coaches"].append(coach_info)
+
+            result["Trains"].append(train_info)
+
+        return result
+
+# Returns services' service_id, if the function fails, INVALID_TRIP is returned
 async def get_svc_id(is_czptt, svc_friendly_id, date):
     if is_czptt:
         con = get_con('DUK_JR_vlak')
@@ -477,12 +553,53 @@ async def data_zastavek():
     return all_stops
 
 
-@app.get("/GetTrainConsist", response_model=ReturnCompleteTrainData)
-async def sestavy_vlaku():
-    with open("const.json", 'r', encoding='UTF-8') as file:
-        const = json.load(file)
+@app.post("/GetTrainConsist", response_model=ReturnCompleteTrainData)
+async def sestavy_vlaku(request: GetTrainData):
+    con = get_con("DUK_JR_vlak")
+    cur = con.cursor()
 
-    return const
+    train_no = request.train_no
+    station_id = request.station_id
+    # TODO: Add departure_date to buses_duk delays to work properly when spanning midnight, for now naively assume always today
+    svc_id = await get_svc_id(True, train_no, datetime.date.today().strftime("%Y%m%d"))
+
+    sql_station = "SELECT stops.stop_id, stops.stop_name FROM trips " \
+                  "JOIN stop_times ON trips.trip_id = stop_times.trip_id " \
+                  "JOIN stops ON stops.stop_id = stop_times.stop_id WHERE " \
+                  "trips.trip_id = %s"
+
+    if station_id is not None:
+        sql_station = sql_station + " AND stops.stop_id = %s"
+
+    sql_station = sql_station + " ORDER BY stop_times.stop_sequence ASC LIMIT 1"
+    cur.execute(sql_station, (svc_id,))
+    station_data = cur.fetchone()
+    station_id = station_data[0].split("-")[3]
+    station_id_cdis = '54' + station_id # + str(await calc_sr70_sum(station_id))
+    station_name = station_data[1]
+
+    base_cdis_url = "https://razeniws.cdis.cz/apiws.svc/getTrains?"
+    query_payload = {
+        "trainParams": [
+            {
+                "TrainNum": str(train_no),
+                "SR70": station_id_cdis,
+                "Date": datetime.date.today().strftime("%d.%m.%Y"),
+                "GetPlan": "false"
+            }
+        ],
+        "lang": "cs",
+        "client": "TrainDetail",
+        "format": "json"
+    }
+
+    # TODO: Find a better way of doing this than mass replacing ' for "
+    result = await fetch_rewrite_cdis_json(base_cdis_url + urllib.parse.urlencode(query_payload).replace('%27', '%22'), station_id, station_name)
+
+    if not result:
+        raise HTTPException(status_code=404, detail="CDIS API returned invalid value!")
+
+    return result
 
 
 @app.post("/GetStopsOnTrip", response_model=ReturnStopsOnTrip)
